@@ -3,8 +3,10 @@ package org.multipaz.samples.wallet.cmp
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
@@ -18,6 +20,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -32,10 +35,10 @@ import mpzcmpwallet.composeapp.generated.resources.compose_multiplatform
 import org.jetbrains.compose.resources.painterResource
 import org.multipaz.asn1.ASN1Integer
 import org.multipaz.cbor.Simple
-import org.multipaz.compose.generateQrCode
 import org.multipaz.compose.permissions.rememberBluetoothPermissionState
 import org.multipaz.compose.presentment.Presentment
 import org.multipaz.compose.prompt.PromptDialogs
+import org.multipaz.compose.qrcode.generateQrCode
 import org.multipaz.crypto.Algorithm
 import org.multipaz.crypto.Crypto
 import org.multipaz.crypto.EcCurve
@@ -54,10 +57,11 @@ import org.multipaz.mdoc.transport.MdocTransportOptions
 import org.multipaz.mdoc.transport.advertise
 import org.multipaz.mdoc.transport.waitForConnection
 import org.multipaz.mdoc.util.MdocUtil
+import org.multipaz.models.digitalcredentials.DigitalCredentials
 import org.multipaz.models.presentment.MdocPresentmentMechanism
 import org.multipaz.models.presentment.PresentmentModel
+import org.multipaz.models.presentment.PresentmentSource
 import org.multipaz.models.presentment.SimplePresentmentSource
-import org.multipaz.prompt.PromptModel
 import org.multipaz.securearea.CreateKeySettings
 import org.multipaz.securearea.SecureArea
 import org.multipaz.securearea.SecureAreaRepository
@@ -66,39 +70,37 @@ import org.multipaz.trustmanagement.TrustManager
 import org.multipaz.trustmanagement.TrustPoint
 import org.multipaz.util.Platform
 import org.multipaz.util.UUID
+import org.multipaz.util.fromHex
 import org.multipaz.util.toBase64Url
 import kotlin.time.Duration.Companion.days
-
-// NOTE: This is currently using code from the framework-export branch
-//
-// Remaining work:
-//  - Simplify DocumentMetadata
-//  - Get rid of CredentialLoader but allow a way to register additional credential types on a DocumentStore
-//
 
 /**
  * Application singleton.
  *
  * Use [App.Companion.getInstance] to get an instance.
  */
-class App(val promptModel: PromptModel) {
-
+class App() {
     lateinit var storage: Storage
     lateinit var documentTypeRepository: DocumentTypeRepository
     lateinit var secureAreaRepository: SecureAreaRepository
     lateinit var secureArea: SecureArea
     lateinit var documentStore: DocumentStore
     lateinit var readerTrustManager: TrustManager
-    val presentmentModel = PresentmentModel().apply { setPromptModel(promptModel) }
+    lateinit var presentmentModel: PresentmentModel
+    lateinit var presentmentSource: PresentmentSource
 
     private val initLock = Mutex()
     private var initialized = false
+
+    val appName = "MpzCmpWallet"
+    val appIcon = Res.drawable.compose_multiplatform
 
     suspend fun init() {
         initLock.withLock {
             if (initialized) {
                 return
             }
+            Error().printStackTrace()
             storage = Platform.getNonBackedUpStorage()
             secureArea = Platform.getSecureArea(storage)
             secureAreaRepository = SecureAreaRepository.Builder().add(secureArea).build()
@@ -151,32 +153,57 @@ class App(val promptModel: PromptModel) {
                         validUntil = validUntil,
                     )
             }
+            presentmentModel = PresentmentModel().apply { setPromptModel(promptModel) }
             readerTrustManager = TrustManager().apply {
-                val readerRootCert = X509Cert.fromPem(
-                    """
-                        -----BEGIN CERTIFICATE-----
-                        MIICUTCCAdegAwIBAgIQppKZHI1iPN290JKEA79OpzAKBggqhkjOPQQDAzArMSkwJwYDVQQDDCBP
-                        V0YgTXVsdGlwYXogVGVzdEFwcCBSZWFkZXIgUm9vdDAeFw0yNDEyMDEwMDAwMDBaFw0zNDEyMDEw
-                        MDAwMDBaMCsxKTAnBgNVBAMMIE9XRiBNdWx0aXBheiBUZXN0QXBwIFJlYWRlciBSb290MHYwEAYH
-                        KoZIzj0CAQYFK4EEACIDYgAE+QDye70m2O0llPXMjVjxVZz3m5k6agT+wih+L79b7jyqUl99sbeU
-                        npxaLD+cmB3HK3twkA7fmVJSobBc+9CDhkh3mx6n+YoH5RulaSWThWBfMyRjsfVODkosHLCDnbPV
-                        o4G/MIG8MA4GA1UdDwEB/wQEAwIBBjASBgNVHRMBAf8ECDAGAQH/AgEAMFYGA1UdHwRPME0wS6BJ
-                        oEeGRWh0dHBzOi8vZ2l0aHViLmNvbS9vcGVud2FsbGV0LWZvdW5kYXRpb24tbGFicy9pZGVudGl0
-                        eS1jcmVkZW50aWFsL2NybDAdBgNVHQ4EFgQUq2Ub4FbCkFPx3X9s5Ie+aN5gyfUwHwYDVR0jBBgw
-                        FoAUq2Ub4FbCkFPx3X9s5Ie+aN5gyfUwCgYIKoZIzj0EAwMDaAAwZQIxANN9WUvI1xtZQmAKS4/D
-                        ZVwofqLNRZL/co94Owi1XH5LgyiBpS3E8xSxE9SDNlVVhgIwKtXNBEBHNA7FKeAxKAzu4+MUf4gz
-                        8jvyFaE0EUVlS2F5tARYQkU6udFePucVdloi
-                        -----END CERTIFICATE-----
-                    """.trimIndent().trim()
+                addTrustPoint(
+                    TrustPoint(
+                        certificate = X509Cert.fromPem(
+                            """
+                                -----BEGIN CERTIFICATE-----
+                                MIICUTCCAdegAwIBAgIQppKZHI1iPN290JKEA79OpzAKBggqhkjOPQQDAzArMSkwJwYDVQQDDCBP
+                                V0YgTXVsdGlwYXogVGVzdEFwcCBSZWFkZXIgUm9vdDAeFw0yNDEyMDEwMDAwMDBaFw0zNDEyMDEw
+                                MDAwMDBaMCsxKTAnBgNVBAMMIE9XRiBNdWx0aXBheiBUZXN0QXBwIFJlYWRlciBSb290MHYwEAYH
+                                KoZIzj0CAQYFK4EEACIDYgAE+QDye70m2O0llPXMjVjxVZz3m5k6agT+wih+L79b7jyqUl99sbeU
+                                npxaLD+cmB3HK3twkA7fmVJSobBc+9CDhkh3mx6n+YoH5RulaSWThWBfMyRjsfVODkosHLCDnbPV
+                                o4G/MIG8MA4GA1UdDwEB/wQEAwIBBjASBgNVHRMBAf8ECDAGAQH/AgEAMFYGA1UdHwRPME0wS6BJ
+                                oEeGRWh0dHBzOi8vZ2l0aHViLmNvbS9vcGVud2FsbGV0LWZvdW5kYXRpb24tbGFicy9pZGVudGl0
+                                eS1jcmVkZW50aWFsL2NybDAdBgNVHQ4EFgQUq2Ub4FbCkFPx3X9s5Ie+aN5gyfUwHwYDVR0jBBgw
+                                FoAUq2Ub4FbCkFPx3X9s5Ie+aN5gyfUwCgYIKoZIzj0EAwMDaAAwZQIxANN9WUvI1xtZQmAKS4/D
+                                ZVwofqLNRZL/co94Owi1XH5LgyiBpS3E8xSxE9SDNlVVhgIwKtXNBEBHNA7FKeAxKAzu4+MUf4gz
+                                8jvyFaE0EUVlS2F5tARYQkU6udFePucVdloi
+                                -----END CERTIFICATE-----
+                            """.trimIndent().trim()
+                        ),
+                        displayName = "OWF Multipaz TestApp",
+                        displayIcon = null,
+                        privacyPolicyUrl = "https://apps.multipaz.org"
+                    )
                 )
                 addTrustPoint(
                     TrustPoint(
-                        certificate = readerRootCert,
-                        displayName = "OWF Multipaz TestApp",
-                        displayIcon = null
+                        certificate = X509Cert(
+                            "30820269308201efa0030201020210b7352f14308a2d40564006785270b0e7300a06082a8648ce3d0403033037310b300906035504060c0255533128302606035504030c1f76657269666965722e6d756c746970617a2e6f726720526561646572204341301e170d3235303631393232313633325a170d3330303631393232313633325a3037310b300906035504060c0255533128302606035504030c1f76657269666965722e6d756c746970617a2e6f7267205265616465722043413076301006072a8648ce3d020106052b81040022036200046baa02cc2f2b7c77f054e9907fcdd6c87110144f07acb2be371b2e7c90eb48580c5e3851bcfb777c88e533244069ff78636e54c7db5783edbc133cc1ff11bbabc3ff150f67392264c38710255743fee7cde7df6e55d7e9d5445d1bde559dcba8a381bf3081bc300e0603551d0f0101ff04040302010630120603551d130101ff040830060101ff02010030560603551d1f044f304d304ba049a047864568747470733a2f2f6769746875622e636f6d2f6f70656e77616c6c65742d666f756e646174696f6e2d6c6162732f6964656e746974792d63726564656e7469616c2f63726c301d0603551d0e04160414b18439852f4a6eeabfea62adbc51d081f7488729301f0603551d23041830168014b18439852f4a6eeabfea62adbc51d081f7488729300a06082a8648ce3d040303036800306502302a1f3bb0afdc31bcee73d3c5bf289245e76bd91a0fd1fb852b45fc75d3a98ba84430e6a91cbfc6b3f401c91382a43a64023100db22d2243644bb5188f2e0a102c0c167024fb6fe4a1d48ead55a6893af52367fb3cdbd66369aa689ecbeb5c84f063666".fromHex()
+                        ),
+                        displayName = "Multipaz Verifier",
+                        displayIcon = null,
+                        privacyPolicyUrl = "https://apps.multipaz.org"
                     )
                 )
             }
+            presentmentSource = SimplePresentmentSource(
+                documentStore = documentStore,
+                documentTypeRepository = documentTypeRepository,
+                readerTrustManager = readerTrustManager,
+                preferSignatureToKeyAgreement = true,
+                domainMdocSignature = "mdoc",
+            )
+            if (DigitalCredentials.Default.available) {
+                DigitalCredentials.Default.startExportingCredentials(
+                    documentStore = documentStore,
+                    documentTypeRepository = documentTypeRepository
+                )
+            }
+            initialized = true
         }
     }
 
@@ -238,22 +265,14 @@ class App(val promptModel: PromptModel) {
                     PresentmentModel.State.WAITING_FOR_CONSENT,
                     PresentmentModel.State.COMPLETED -> {
                         Presentment(
+                            appName = appName,
+                            appIconPainter = painterResource(appIcon),
                             presentmentModel = presentmentModel,
-                            promptModel = promptModel,
+                            presentmentSource = presentmentSource,
                             documentTypeRepository = documentTypeRepository,
-                            source = SimplePresentmentSource(
-                                documentStore = documentStore,
-                                documentTypeRepository = documentTypeRepository,
-                                readerTrustManager = readerTrustManager,
-                                preferSignatureToKeyAgreement = true,
-                                domainMdocSignature = "mdoc",
-                            ),
                             onPresentmentComplete = {
                                 presentmentModel.reset()
                             },
-                            appName = "MpzCmpWallet",
-                            appIconPainter = painterResource(Res.drawable.compose_multiplatform),
-                            modifier = Modifier
                         )
                     }
                 }
@@ -314,6 +333,12 @@ class App(val promptModel: PromptModel) {
             }) {
                 Text("Present mDL via QR")
             }
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = "The mDL is also available\n" +
+                        "via NFC engagement and W3C DC API\n" +
+                        "(Android-only right now)",
+                textAlign = TextAlign.Center)
         }
     }
 
@@ -346,12 +371,12 @@ class App(val promptModel: PromptModel) {
     }
 
     companion object {
+        val promptModel = Platform.promptModel
+
         private var app: App? = null
-        fun getInstance(promptModel: PromptModel): App {
+        fun getInstance(): App {
             if (app == null) {
-                app = App(promptModel)
-            } else {
-                check(app!!.promptModel === promptModel)
+                app = App()
             }
             return app!!
         }
