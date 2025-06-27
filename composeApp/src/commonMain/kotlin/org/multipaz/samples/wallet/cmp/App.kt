@@ -100,9 +100,8 @@ class App() {
             if (initialized) {
                 return
             }
-            Error().printStackTrace()
-            storage = Platform.getNonBackedUpStorage()
-            secureArea = Platform.getSecureArea(storage)
+            storage = Platform.nonBackedUpStorage
+            secureArea = Platform.getSecureArea()
             secureAreaRepository = SecureAreaRepository.Builder().add(secureArea).build()
             documentTypeRepository = DocumentTypeRepository().apply {
                 addDocumentType(DrivingLicense.getDocumentType())
